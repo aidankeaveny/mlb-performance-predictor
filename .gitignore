@@ -16,3 +16,6 @@ __pycache__/
 
 # Output
 output/
+
+# Ignore virtual environments
+.venv/
