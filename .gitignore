@@ -14,8 +14,21 @@ __pycache__/
 # OS
 .DS_Store
 
-# Output
-output/
 
 # Ignore virtual environments
 .venv/
+.venv310/
+.venv310v2/
+.venv310v3/
+
+# Ignore data files
+notebooks/gridsearch_chunks/
+notebooks/*_gridsearch_chunks/
+
+# Ignore models
+models/
+notebooks/catboost_info
+notebooks/ensemble_engineered
+
+*.joblib
+*.npy
