@@ -24,6 +24,7 @@ __pycache__/
 # Ignore data files
 notebooks/gridsearch_chunks/
 notebooks/*_gridsearch_chunks/
+notebooks/colab_gridsearch/
 
 # Ignore models
 models/
@@ -32,3 +33,4 @@ notebooks/ensemble_engineered
 
 *.joblib
 *.npy
+*.tsv

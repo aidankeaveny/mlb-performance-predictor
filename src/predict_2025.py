@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import numpy as np
 import torch
@@ -7,24 +8,33 @@ from pybaseball import batting_stats
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
 
-
+from config import TARGET_VAR, FEATURE_COLS
 from data_utils import (
     build_y1_features,
     create_aggregates,
     encode_positions
 )
 from model_utils import PlayerMLP
-from pipeline import load_mlp_ensemble
-import os
 
 MODEL_DIR = "models/ensemble_engineered"
+OUTPUT_DIR = "output"
+YEAR=2025
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 
-
+def load_year_data(year):
+    try:
+        df = batting_stats(year)
+        df['Season'] = year
+        return df
+    except Exception as e:
+        print(f"Failed to load data for year {year}: {e}")
+        return None
 
 def main():
-    print(f"torch version: {torch.__version__}")  # Should print 2.x.x+cpu
-    print(torch.backends.mps.is_available())  # Should print True if MPS is available
+    print("Device:", device)
+    print("Predicting:", TARGET_VAR)
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     # Load models and assets
     scaler = joblib.load(os.path.join(MODEL_DIR, "scaler.joblib"))
@@ -35,61 +45,52 @@ def main():
     catboost_model = joblib.load("models/ensemble_engineered/catboost_model.joblib")
     print("Assets loaded.")
 
-    print("Generating 2025 Predictions...")
 
     # === Pull Latest Data ===
+    print("Loading 2024 data...")
     df_2024 = batting_stats(2024)
     df_2024['Season'] = 2024
-    print("2024 data loaded.")
 
     # === Load Historical Data in Parallel ===
+    print("Loading historical data...")
     with ThreadPoolExecutor() as executor:
-        all_years = list(tqdm(executor.map(load_year_data, range(1900, 2024)), total=2024 - 1900, desc="Loading Historical Data", unit="year"))
-    
-    # Filter out None values for failed years
-    all_years = [year_data for year_data in all_years if year_data is not None]
-    df_hist = pd.concat(all_years)
-    print("Historical data loaded.")
+        all_years = list(tqdm(executor.map(load_year_data, range(1900, 2024)), total=2024 - 1900))
+    df_hist = pd.concat([d for d in all_years if d is not None])
+
 
     # === Create Aggregates from Historical Data ===
+    print("Creating aggregates...")
     df_agg = create_aggregates(df_hist)
-    print("Historical data aggregated.")
 
     # === Build *_y1 features ===
+    print("Building features...")
     df_y1 = build_y1_features(df_2024)
-    print("2024 features built.")
 
     # === Merge historical and y1 ===
     df = pd.merge(df_y1, df_agg, on='Name', how='inner')
     df = encode_positions(df, df_2024)
-    print("Data merged and positions encoded.")
 
     # === Filter to saved features and scale ===
     X = df[features].fillna(0).values
     X_scaled = scaler.transform(X)
     X_tensor = torch.tensor(X_scaled, dtype=torch.float32).to(device)
-    print("Data filtered to features and scaled.")
 
     # === MLP Ensemble Prediction ===
+    print("Predicting with MLP ensemble...")
     mlp_preds = load_mlp_ensemble(X_tensor, top5)
-    df['OPS_2025_pred_MLP'] = mlp_preds
+    df[f"{TARGET_VAR}_{YEAR}_pred_MLP"] = mlp_preds
 
     # === CatBoost Prediction ===
+    print("Predicting with CatBoost...")
     cat_preds = catboost_model.predict(X_scaled)
-    df['OPS_2025_pred_CatBoost'] = cat_preds
+    df[f"{TARGET_VAR}_{YEAR}_pred_CatBoost"] = cat_preds
 
     # === Save Output ===
-    output_cols = ['Name', 'OPS_2025_pred_MLP', 'OPS_2025_pred_CatBoost']
-    df[output_cols].to_csv("output/2025_predictions.csv", index=False)
+    output_cols = ['Name', f"{TARGET_VAR}_{YEAR}_pred_MLP", f"{TARGET_VAR}_{YEAR}_pred_CatBoost"]
+    df[output_cols].to_csv(os.path.join(OUTPUT_DIR, f"{TARGET_VAR}_{YEAR}_predictions.csv"), index=False)
 
-    print("2025 predictions saved to: output/2025_predictions.csv")
+    print(f"Saved {TARGET_VAR} predictions to: {OUTPUT_DIR}/{TARGET_VAR}_{YEAR}_predictions.csv")
 
-def load_year_data(year):
-    try:
-        return batting_stats(year)
-    except Exception as e:
-        print(f"Failed to load data for year {year}: {e}")
-        return None
 
 def load_mlp_ensemble(X_tensor, top5):
     ensemble_preds = []
